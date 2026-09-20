@@ -4,6 +4,12 @@ This is the byte-level contract the Core Lead implements the `vsock-attest`
 verifier (CR-CORE-6) against. Any change requires a version bump and MUST be
 mirrored on both sides.
 
+## Source of truth
+All wire types, quote-type constants, and pure framing helpers live in
+`fleetos_core::vsock_proto` (feature `vsock-attest`). `fleetos-guest-init`
+re-exports them from `src/protocol.rs` and adds the socket I/O wrappers;
+`fleetos-agent` imports the same module directly. One definition, no drift.
+
 ## Transport
 - AF_VSOCK, SOCK_STREAM, blocking.
 - Guest context ID connects to HOST_CID = 2, port = 0x4649 (VSOCK_PORT).
@@ -11,7 +17,8 @@ mirrored on both sides.
 
 ## Framing
 Every message is `[u32 little-endian length][postcard payload]`.
-Max message size: 16 MiB (guest aborts on anything larger).
+Implemented by `fleetos_core::vsock_proto::frame_msg` / `decode_msg`.
+Max message size: 16 MiB (`MAX_MESSAGE_BYTES`); reject anything larger.
 
 ## Message sequence
 1. Agent -> Guest: `VsockAttestationChallenge`
@@ -25,6 +32,7 @@ Max message size: 16 MiB (guest aborts on anything larger).
 | 0     | TPM2 (vTPM) |
 | 1     | SEV-SNP |
 | 2     | TDX |
+| 3     | Host-Measured (non-CC; pre-boot measurement + CID isolation) |
 | 0xFF  | Dev software quote — MUST be rejected in production (fail-closed) |
 
 ## Security invariants
@@ -36,9 +44,6 @@ Max message size: 16 MiB (guest aborts on anything larger).
 - Protocol-version mismatch MUST be rejected.
 
 ## Structs
-See `src/protocol.rs` (authoritative). The round-trip tests there pin the
-postcard layout.
-
-## Recommendation
-Promote these structs into `fleetos-core` under the `vsock-attest` feature so
-guest-init and the agent verifier share one definition and cannot drift.
+Authoritative definitions: `fleetos_core::vsock_proto`. The round-trip tests
+in `fleetos-guest-init/src/protocol.rs` pin the postcard layout via
+`frame_msg`/`decode_msg`.

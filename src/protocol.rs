@@ -108,6 +108,8 @@ mod tests {
             guest_ip: [10, 0, 0, 2],
             netmask: [255, 255, 255, 0],
             gateway: [10, 0, 0, 1],
+            // CORE-WI-7: additive field, empty for this test.
+            secrets: vec![],
         };
         let back: WorkloadConfig = round_trip(&c);
         assert_eq!(back.workload_binary_path, c.workload_binary_path);

@@ -21,6 +21,7 @@ pub fn setup(config: &WorkloadConfig, sealing_key: &[u8]) -> Result<(), GuestIni
     write_minimal_etc_files()?;
     install_sealing_key(sealing_key)?;
     install_svid(config)?;
+    install_secrets(config)?;
     write_hosts(config)?;
     mount_volumes(config)?;
     Ok(())
@@ -103,6 +104,68 @@ fn install_svid(config: &WorkloadConfig) -> Result<(), GuestInitError> {
         fs::write(SVID_KEY_PATH, &config.svid_private_key_der).map_err(GuestInitError::Io)?;
         chmod(SVID_KEY_PATH, 0o600)?;
     }
+    Ok(())
+}
+
+/// CORE-WI-7: Write delivered secrets to `/run/fleetos/secrets/{name}`.
+///
+/// Fail-closed: any validation or write error aborts setup, so the workload
+/// never starts missing an authorized secret.
+///
+/// Path traversal defense: guest-init is PID 1 running as root inside the
+/// VM. Names originate upstream (agent → WorkloadConfig), but we validate
+/// here regardless — reject `/`, `..` components, and empty names.
+///
+/// Never log secret bytes. Names and sizes are loggable; content is not.
+fn install_secrets(config: &WorkloadConfig) -> Result<(), GuestInitError> {
+    if config.secrets.is_empty() {
+        return Ok(());
+    }
+
+    const SECRETS_DIR: &str = "/run/fleetos/secrets";
+
+    fs::create_dir_all(SECRETS_DIR).map_err(GuestInitError::Io)?;
+
+    for (name, bytes) in &config.secrets {
+        // Validate the name before touching the filesystem.
+        if name.is_empty() {
+            return Err(GuestInitError::Environment(
+                "secret name is empty".to_string(),
+            ));
+        }
+        if name.contains('/') || name.contains('\\') {
+            return Err(GuestInitError::Environment(format!(
+                "secret name contains path separator: {:?}",
+                name
+            )));
+        }
+        if name == "." || name == ".." || name.split('.').any(|c| c == "..") {
+            return Err(GuestInitError::Environment(format!(
+                "secret name contains traversal component: {:?}",
+                name
+            )));
+        }
+        // Reject names that would resolve outside SECRETS_DIR (belt-and-suspenders).
+        let target = format!("{}/{}", SECRETS_DIR, name);
+        if target.contains("..") {
+            return Err(GuestInitError::Environment(format!(
+                "secret name resolves outside secrets directory: {:?}",
+                name
+            )));
+        }
+
+        // Write the secret file with mode 0600 (owner read/write only).
+        fs::write(&target, bytes).map_err(GuestInitError::Io)?;
+        chmod(&target, 0o600)?;
+
+        // Log name + size only. NEVER log secret bytes.
+        eprintln!(
+            "[fleetos-guest-init] secret installed: {} ({} bytes)",
+            name,
+            bytes.len()
+        );
+    }
+
     Ok(())
 }
 
